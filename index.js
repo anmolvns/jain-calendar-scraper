@@ -78,6 +78,19 @@ async function fetchAndStoreCalendar(year, monthNum) {
 
     const calendar = json.calendar || [];
 
+    // Check if data already exists for the year and month
+    const existingRecords = await pool.query(
+      'SELECT COUNT(*) FROM jain_calendar WHERE en_year = $1 AND en_month = $2',
+      [year, monthNum]
+    );
+
+    if (existingRecords.rows[0].count > 0) {
+      console.log(
+        `⚠️ Data already exists for ${year}-${monthName}. Skipping...`
+      );
+      return; // Exit if data already exists
+    }
+
     for (const day of calendar) {
       const values = [
         day.en_day,
