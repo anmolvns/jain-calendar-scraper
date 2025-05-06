@@ -12,6 +12,31 @@ const pool = new Pool({
   database: process.env.DB_NAME,
 });
 
+// Jain months in order
+const JAIN_MONTHS = [
+  'CHAITRA',
+  'VAISHAKH',
+  'JETH',
+  'ASHADHH',
+  'SHRAVAN',
+  'BHADARVO',
+  'AASO',
+  'KARTAK',
+  'MAGSHAR',
+  'POSH',
+  'MAHAA',
+  'FAAGAN',
+];
+
+function extractFirst(value) {
+  return value?.split('/')?.[0]?.trim();
+}
+
+function getMonthNumber(monthName) {
+  const index = JAIN_MONTHS.indexOf(monthName?.toUpperCase());
+  return index !== -1 ? index + 1 : null;
+}
+
 async function migrateCalendarData() {
   const { rows: allRows } = await pool.query(`
     SELECT * FROM jain_calendar
@@ -25,7 +50,35 @@ async function migrateCalendarData() {
       '0'
     )}-${String(row.en_date).padStart(2, '0')}`;
 
-    // Step 1: Insert into greg_calendar_dates
+    const rawPaksha = extractFirst(row.cal_sud_vad?.toUpperCase());
+    const rawMonth = extractFirst(row.cal_month)?.toUpperCase();
+    const rawTithi = extractFirst(row.cal_tithi);
+
+    const validPaksha = ['SUD', 'VAD'].includes(rawPaksha) ? rawPaksha : null;
+    if (!validPaksha) {
+      console.warn(
+        `⚠️ Skipping row with invalid paksha "${row.cal_sud_vad}" on ${gregDate}`
+      );
+      continue;
+    }
+
+    const tithi = parseInt(rawTithi);
+    if (isNaN(tithi)) {
+      console.warn(
+        `⚠️ Skipping row with invalid tithi "${row.cal_tithi}" on ${gregDate}`
+      );
+      continue;
+    }
+
+    const monthNumber = getMonthNumber(rawMonth);
+    if (!monthNumber) {
+      console.warn(
+        `⚠️ Skipping row with invalid month "${row.cal_month}" on ${gregDate}`
+      );
+      continue;
+    }
+
+    // Insert into greg_calendar_dates
     const gregRes = await pool.query(
       `INSERT INTO greg_calendar_dates (greg_date, greg_day_name)
        VALUES ($1, $2)
@@ -35,65 +88,45 @@ async function migrateCalendarData() {
     );
     const gregDateId = gregRes.rows[0].id;
 
-    // Step 2: Sanitize and insert Jain calendar date
-    const rawPaksha = row.cal_sud_vad?.toUpperCase().trim();
-    let validPaksha = null;
-
-    if (rawPaksha?.includes('SUD')) validPaksha = 'SUD';
-    else if (rawPaksha?.includes('VAD')) validPaksha = 'VAD';
-    else {
-      console.warn(
-        `⚠️ Skipping row with invalid paksha "${row.cal_sud_vad}" on ${gregDate}`
-      );
-      continue;
-    }
-
-    const tithi = parseInt(row.cal_tithi);
-    if (isNaN(tithi)) {
-      console.warn(
-        `⚠️ Skipping row with invalid tithi "${row.cal_tithi}" on ${gregDate}`
-      );
-      continue;
-    }
-
+    // Insert into jain_calendar_dates
     await pool.query(
       `INSERT INTO jain_calendar_dates (
-    greg_calendar_dates_id, jain_tithi, jain_paksha,
-    jain_month_name, jain_month_number,
-    jain_veer_samvat_year, jain_vikram_samvat_year,
-    jain_day_name
-  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-  ON CONFLICT (greg_calendar_dates_id, jain_tithi, jain_paksha) DO UPDATE SET
-    jain_month_name = EXCLUDED.jain_month_name,
-    jain_month_number = EXCLUDED.jain_month_number,
-    jain_veer_samvat_year = EXCLUDED.jain_veer_samvat_year,
-    jain_vikram_samvat_year = EXCLUDED.jain_vikram_samvat_year,
-    jain_day_name = EXCLUDED.jain_day_name`,
+        greg_calendar_dates_id, jain_tithi, jain_paksha,
+        jain_month_name, jain_month_number,
+        jain_veer_samvat_year, jain_vikram_samvat_year,
+        jain_day_name
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      ON CONFLICT (greg_calendar_dates_id, jain_tithi, jain_paksha) DO UPDATE SET
+        jain_month_name = EXCLUDED.jain_month_name,
+        jain_month_number = EXCLUDED.jain_month_number,
+        jain_veer_samvat_year = EXCLUDED.jain_veer_samvat_year,
+        jain_vikram_samvat_year = EXCLUDED.jain_vikram_samvat_year,
+        jain_day_name = EXCLUDED.jain_day_name`,
       [
         gregDateId,
         tithi,
         validPaksha,
-        row.cal_month,
-        validPaksha === 'SUD' ? 1 : 2,
+        rawMonth,
+        monthNumber,
         row.cal_veer_year,
         row.cal_vikram_year,
         row.cal_day,
       ]
     );
 
-    // Step 3: Insert event if present
+    // Insert event if present
     const eventName =
       row.cal_special_event?.trim() || row.cal_event_details?.trim();
     if (eventName) {
       await pool.query(
         `INSERT INTO jain_events (
-    recurrence, jain_month_name, jain_paksha,
-    jain_tithi, jain_event_name, description
-  ) VALUES ($1, $2, $3, $4, $5, $6)
-  ON CONFLICT (recurrence, jain_month_name, jain_paksha, jain_tithi, jain_event_name) DO NOTHING`,
+          recurrence, jain_month_name, jain_paksha,
+          jain_tithi, jain_event_name, description
+        ) VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (recurrence, jain_month_name, jain_paksha, jain_tithi, jain_event_name) DO NOTHING`,
         [
           'ANNUAL',
-          row.cal_month,
+          rawMonth,
           validPaksha,
           tithi,
           eventName,
