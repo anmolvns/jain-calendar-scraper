@@ -12,7 +12,14 @@ const pool = new Pool({
   database: process.env.DB_NAME,
 });
 
-// Jain months in order
+function normalizeEventName(name) {
+  return name
+    ?.replace(/<br\s*\/?>/gi, '<br>')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*\.\s*/g, '. ')
+    .trim();
+}
+
 const JAIN_MONTHS = [
   'CHAITRA',
   'VAISHAKH',
@@ -88,8 +95,7 @@ async function migrateCalendarData() {
     );
     const gregDateId = gregRes.rows[0].id;
 
-    // Insert into jain_calendar_dates
-    await pool.query(
+    const jainRes = await pool.query(
       `INSERT INTO jain_calendar_dates (
         greg_calendar_dates_id, jain_tithi, jain_paksha,
         jain_month_name, jain_month_number,
@@ -101,7 +107,8 @@ async function migrateCalendarData() {
         jain_month_number = EXCLUDED.jain_month_number,
         jain_veer_samvat_year = EXCLUDED.jain_veer_samvat_year,
         jain_vikram_samvat_year = EXCLUDED.jain_vikram_samvat_year,
-        jain_day_name = EXCLUDED.jain_day_name`,
+        jain_day_name = EXCLUDED.jain_day_name
+      RETURNING id`,
       [
         gregDateId,
         tithi,
@@ -113,24 +120,28 @@ async function migrateCalendarData() {
         row.cal_day,
       ]
     );
+    const jainCalendarDateId = jainRes.rows[0].id;
 
-    // Insert event if present
-    const eventName =
+    const rawEvent =
       row.cal_special_event?.trim() || row.cal_event_details?.trim();
+    const eventName = normalizeEventName(rawEvent);
+
     if (eventName) {
       await pool.query(
         `INSERT INTO jain_events (
-          recurrence, jain_month_name, jain_paksha,
+          calendar_id, jain_calendar_date_id, recurrence, jain_month_name, jain_paksha,
           jain_tithi, jain_event_name, description
-        ) VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (recurrence, jain_month_name, jain_paksha, jain_tithi, jain_event_name) DO NOTHING`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (jain_calendar_date_id, jain_event_name) DO NOTHING`,
         [
+          '2', // assuming calendar_id = 2 for JAIN
+          jainCalendarDateId,
           'ANNUAL',
           rawMonth,
           validPaksha,
           tithi,
           eventName,
-          row.cal_event_details || null,
+          normalizeEventName(row.cal_event_details) || null,
         ]
       );
     }
