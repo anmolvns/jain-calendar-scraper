@@ -120,11 +120,13 @@ async function migrateCalendarData() {
     if (eventName) {
       await pool.query(
         `INSERT INTO jain_events (
+          calendar_id,
           recurrence, jain_month_name, jain_paksha,
           jain_tithi, jain_event_name, description
-        ) VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (recurrence, jain_month_name, jain_paksha, jain_tithi, jain_event_name) DO NOTHING`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (calendar_id, jain_month_name, jain_paksha, jain_tithi, jain_event_name) DO NOTHING`,
         [
+          '2', // You must provide this value in code
           'ANNUAL',
           rawMonth,
           validPaksha,
